@@ -7,11 +7,11 @@ import { href, useRoute } from "./lib/router";
 import type { Config, NodeStatus, Unread } from "./lib/types";
 import { Login } from "./pages/Login";
 import { NodePage } from "./pages/NodePage";
-import { Placeholder } from "./pages/Placeholder";
 import { ChannelsPage } from "./pages/Channels";
 import { DmsPage } from "./pages/Dms";
 import { RepeatersPage } from "./pages/Repeaters";
 import { ChartsPage } from "./pages/Charts";
+import { MapPage } from "./pages/MapPage";
 import { StatusBadge } from "./components/StatusBadge";
 import { ToastHost } from "./components/Toast";
 import { IconChannels, IconCharts, IconDm, IconMap, IconNode, IconRepeater, Logo } from "./components/Icons";
@@ -95,11 +95,14 @@ function Shell({ onLogout }: { onLogout: () => void }) {
     case "charts":
       page = <ChartsPage param={route[1]} />;
       break;
+    case "map":
+      page = <MapPage key={route[1] ?? ""} param={route[1]} />;
+      break;
     case "node":
       page = <NodePage onLogout={onLogout} />;
       break;
     default:
-      page = <Placeholder title={nav.find((n) => n[0] === section)?.[1] ?? ""} />;
+      page = <ChannelsPage param={route[1]} />;
   }
 
   return (

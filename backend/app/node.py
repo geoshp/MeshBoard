@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import logging
 import time
 from typing import Any, Awaitable, Callable
@@ -547,3 +548,39 @@ class NodeService:
             finally:
                 waiter.close()
         self.hub.publish("message_update", self.db.update_message(msg_id, status="failed"))
+
+    # --- trace ---
+    async def start_trace(self, contact: dict) -> dict:
+        """Запускает trace до узла; результат приходит событием 'trace' по WebSocket."""
+        self.require()
+        path, _size = parse.build_trace_path(contact)
+        tag = int.from_bytes(os.urandom(4), "little") or 1
+        trace = self.db.add_trace(contact["public_key"], tag, path, "pending")
+        self.hub.publish("trace", trace)
+        self.spawn(self._run_trace(trace["id"], tag, path), name="trace")
+        return trace
+
+    async def _run_trace(self, trace_id: int, tag: int, path: str) -> None:
+        mc = self.mc
+        if mc is None:
+            self.hub.publish("trace", self.db.update_trace(trace_id, "error"))
+            return
+        waiter = EventWaiter(mc, EventType.TRACE_DATA)
+        try:
+            ev = await self.cmd(mc.commands.send_trace, path=path, tag=tag)
+            if ev.type == EventType.ERROR:
+                self.hub.publish("trace", self.db.update_trace(trace_id, "error"))
+                return
+            hops_n = path.count(",") + 1
+            timeout = max(15.0, ev.payload.get("suggested_timeout", 0) / 1000 * 1.5, 5.0 * hops_n)
+            got = await waiter.wait(lambda e: e.attributes.get("tag") == tag, timeout)
+            if got is None:
+                self.hub.publish("trace", self.db.update_trace(trace_id, "timeout"))
+                return
+            hops = parse.trace_hops(got.payload)
+            self.hub.publish("trace", self.db.update_trace(trace_id, "ok", hops))
+        except Exception as e:  # noqa: BLE001
+            log.warning("trace failed: %r", e)
+            self.hub.publish("trace", self.db.update_trace(trace_id, "error"))
+        finally:
+            waiter.close()

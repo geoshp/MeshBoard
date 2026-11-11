@@ -342,6 +342,105 @@ def chart_activity(period: str = "24h", svc=Depends(services)) -> dict:
     }
 
 
+# --- карта и трассировки ---
+
+def _trace_out(tr: dict, contacts: list[dict]) -> dict:
+    from . import parse
+    tr = dict(tr)
+    hops = tr.get("hops") or []
+    tr["resolved"] = parse.resolve_hops([h.get("hash") or "" for h in hops if h.get("hash")], contacts)
+    sent = (tr.get("path_sent") or "").split(",") if tr.get("path_sent") else []
+    tr["path_resolved"] = parse.resolve_hops(sent, contacts)
+    return tr
+
+
+@router.post("/contacts/{key}/trace", dependencies=[Depends(require_auth)])
+async def trace(key: str, svc=Depends(services)) -> dict:
+    c = svc.db.get_contact(key.lower())
+    if not c:
+        raise body_error("contact_not_found", 404)
+    if not svc.node.connected:
+        raise node_unavailable()
+    tr = await svc.node.start_trace(c)
+    return _trace_out(tr, svc.db.list_contacts())
+
+
+@router.get("/traces", dependencies=[Depends(require_auth)])
+def traces(period: str = "7d", svc=Depends(services)) -> list[dict]:
+    since, _, _ = _range(period)
+    contacts = svc.db.list_contacts()
+    return [_trace_out(t, contacts) for t in svc.db.list_traces(since, 50)]
+
+
+@router.get("/traces/{trace_id}", dependencies=[Depends(require_auth)])
+def trace_get(trace_id: int, svc=Depends(services)) -> dict:
+    tr = svc.db.get_trace(trace_id)
+    if not tr:
+        raise body_error("not_found", 404)
+    return _trace_out(tr, svc.db.list_contacts())
+
+
+@router.get("/map", dependencies=[Depends(require_auth)])
+def map_data(period: str = "24h", svc=Depends(services)) -> dict:
+    from . import parse
+    since, _, _ = _range(period)
+    contacts = svc.db.list_contacts()
+    own = _own_set(svc)
+    by_key = {c["public_key"]: c for c in contacts}
+    si = svc.node.status.get("self_info") or {}
+    self_node = {
+        "public_key": si.get("public_key"), "name": si.get("name"),
+        "lat": si.get("adv_lat") or None, "lon": si.get("adv_lon") or None,
+    }
+
+    def keys(resolved: list[dict]) -> list[str | None]:
+        return [r["candidates"][0]["public_key"] if len(r["candidates"]) == 1 else None for r in resolved]
+
+    # маршруты к контактам (out_path): мы -> хопы -> контакт
+    routes = []
+    for c in contacts:
+        if c["out_path_len"] > 0:
+            hops = parse.split_hops(c["out_path"], c["out_path_hash_mode"] + 1)
+            routes.append({"public_key": c["public_key"], "hops": keys(parse.resolve_hops(hops, contacts))})
+
+    # пути принятых сообщений: отправитель -> хопы -> мы
+    agg: dict[tuple, dict] = {}
+    for m in svc.db.recent_message_paths(since):
+        sender = m["contact_key"]
+        if not sender and m["sender_name"]:
+            sc = svc.db.find_contact_by_name(m["sender_name"])
+            sender = sc["public_key"] if sc else None
+        hops = parse.split_hops(m["path"], m["path_hash_size"])
+        k = (sender, m["path"])
+        a = agg.setdefault(k, {"sender": sender, "sender_name": m["sender_name"],
+                               "hops": keys(parse.resolve_hops(hops, contacts)), "raw": hops,
+                               "count": 0, "last_ts": 0})
+        a["count"] += 1
+        a["last_ts"] = max(a["last_ts"], m["ts"])
+
+    # соседи своих репитеров
+    links = []
+    for key in own:
+        nb = svc.db.last_neighbours(key)
+        for n in (nb or {}).get("neighbours") or []:
+            cands = [c for c in contacts if c["public_key"].startswith((n.get("pubkey") or "~").lower())]
+            if len(cands) == 1:
+                links.append({"from": key, "to": cands[0]["public_key"], "snr": n.get("snr")})
+
+    trs = [_trace_out(t, contacts) for t in svc.db.list_traces(since, 30) if t["status"] == "ok"]
+    return {
+        "self": self_node,
+        "contacts": [_contact_out(c, own) for c in contacts],
+        "routes": routes,
+        "message_paths": sorted(agg.values(), key=lambda a: -a["count"])[:200],
+        "neighbours": links,
+        "traces": [{"id": t["id"], "ts": t["ts"], "target_key": t["target_key"],
+                    "hops": keys(t["resolved"]), "snr": [h.get("snr") for h in t["hops"] or []]}
+                   for t in trs],
+        "unknown_keys": [k for k in by_key if by_key[k]["lat"] is None],
+    }
+
+
 # --- WebSocket ---
 
 async def websocket_endpoint(ws: WebSocket) -> None:
