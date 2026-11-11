@@ -404,6 +404,19 @@ class Database:
             out[name] = [[r["t"], round(r["v"], 3)] for r in rows]
         return out
 
+    def query_metrics_max(
+        self, source: str, names: list[str], since: int, until: int, bucket: int
+    ) -> dict[str, list[list[float]]]:
+        out: dict[str, list[list[float]]] = {}
+        for name in names:
+            rows = self._all(
+                "SELECT (ts / ?) * ? AS t, MAX(value) AS v FROM metrics "
+                "WHERE source = ? AND name = ? AND ts BETWEEN ? AND ? GROUP BY t ORDER BY t",
+                (bucket, bucket, source, name, since, until),
+            )
+            out[name] = [[r["t"], r["v"]] for r in rows]
+        return out
+
     def latest_metrics(self, source: str) -> dict:
         rows = self._all(
             "SELECT m.name, m.value, m.ts FROM metrics m JOIN (SELECT name, MAX(ts) AS ts FROM metrics "

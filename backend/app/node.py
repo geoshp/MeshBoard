@@ -144,8 +144,11 @@ class NodeService:
         if self.s.mock:
             from .mock.emulator import MockNode
 
+            from .mock.history import seed_history
+
             self.mock_node = MockNode(speed=self.s.mock_speed)
             await self.mock_node.start()
+            await asyncio.to_thread(seed_history, self.db, self.mock_node.state)
         self._supervisor = asyncio.create_task(self._supervise(), name="node-supervisor")
 
     async def stop(self) -> None:

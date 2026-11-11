@@ -220,6 +220,128 @@ def dm_read(key: str, svc=Depends(services)) -> dict:
     return {"ok": True, "marked": n}
 
 
+# --- репитеры ---
+
+PERIODS = {"1h": 3600, "6h": 6 * 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
+
+
+class OwnBody(BaseModel):
+    own: bool
+
+
+class SettingsBody(BaseModel):
+    repeater_poll_min: int = Field(ge=1, le=1440)
+
+
+@router.get("/repeaters", dependencies=[Depends(require_auth)])
+def repeaters(svc=Depends(services)) -> dict:
+    rp = svc.repeaters
+    own = set(rp.own())
+    items = [rp.describe(c, own) for c in svc.db.list_contacts() if c["type"] in (2, 3)]
+    items.sort(key=lambda r: (not r["own"], -(r["last_heard"] or 0)))
+    return {"repeaters": items, "interval_min": rp.interval_min}
+
+
+@router.put("/repeaters/{key}/own", dependencies=[Depends(require_auth)])
+def repeater_own(key: str, body: OwnBody, svc=Depends(services)) -> dict:
+    c = svc.db.get_contact(key.lower())
+    if not c or c["type"] not in (2, 3):
+        raise body_error("contact_not_found", 404)
+    svc.repeaters.set_own(c["public_key"], body.own)
+    svc.hub.publish("repeater", {"public_key": c["public_key"]})
+    return {"ok": True}
+
+
+@router.post("/repeaters/{key}/poll", dependencies=[Depends(require_auth)])
+def repeater_poll(key: str, svc=Depends(services)) -> dict:
+    c = svc.db.get_contact(key.lower())
+    if not c or c["type"] not in (2, 3):
+        raise body_error("contact_not_found", 404)
+    if not svc.node.connected:
+        raise node_unavailable()
+    svc.repeaters.request_poll(c["public_key"])
+    return {"ok": True}
+
+
+@router.get("/repeaters/{key}/history", dependencies=[Depends(require_auth)])
+def repeater_history(key: str, svc=Depends(services)) -> list[dict]:
+    return svc.db.repeater_poll_history(key.lower(), 20)
+
+
+@router.put("/settings", dependencies=[Depends(require_auth)])
+def put_settings(body: SettingsBody, svc=Depends(services)) -> dict:
+    svc.repeaters.set_interval(body.repeater_poll_min)
+    svc.hub.publish("repeater", {})
+    return {"ok": True, "repeater_poll_min": svc.repeaters.interval_min}
+
+
+# --- графики ---
+
+def _range(period: str) -> tuple[int, int, int]:
+    import time as _t
+    span = PERIODS.get(period, 86400)
+    until = int(_t.time())
+    bucket = max(60, span // 180)
+    return until - span, until, bucket
+
+
+COUNTERS = {"tx_air_secs", "rx_air_secs", "recv", "sent", "flood_tx", "direct_tx", "flood_rx",
+            "direct_rx", "recv_errors", "direct_dups", "flood_dups"}
+
+
+@router.get("/charts/metrics", dependencies=[Depends(require_auth)])
+def chart_metrics(source: str = "self", names: str = "", period: str = "24h", svc=Depends(services)) -> dict:
+    since, until, bucket = _range(period)
+    wanted = [n for n in names.split(",") if n][:20]
+    gauges = [n for n in wanted if n not in COUNTERS]
+    counters = [n for n in wanted if n in COUNTERS]
+    series = svc.db.query_metrics(source.lower(), gauges, since, until, bucket) if gauges else {}
+    if counters:
+        # счётчики накопительные: берём максимум в корзине и разность соседних корзин
+        raw = svc.db.query_metrics_max(source.lower(), counters, since - bucket, until, bucket)
+        for name, pts in raw.items():
+            out = []
+            for (t0, v0), (t1, v1) in zip(pts, pts[1:]):
+                d = v1 - v0
+                out.append([t1, round(d, 3) if d >= 0 else None])
+            series[name] = out
+    return {"since": since, "until": until, "bucket": bucket, "series": series}
+
+
+@router.get("/charts/sources", dependencies=[Depends(require_auth)])
+def chart_sources(svc=Depends(services)) -> list[dict]:
+    have = set(svc.db.metric_sources())
+    out = [{"key": "self", "name": None}]
+    for c in svc.db.list_contacts():
+        if c["public_key"] in have:
+            out.append({"key": c["public_key"], "name": c["name"]})
+    return out
+
+
+@router.get("/charts/messages", dependencies=[Depends(require_auth)])
+def chart_messages(period: str = "24h", svc=Depends(services)) -> dict:
+    since, until, _ = _range(period)
+    bucket = 3600 if PERIODS.get(period, 86400) >= 86400 else 600
+    return {"bucket": bucket, "rows": svc.db.messages_per_bucket(since, until, bucket)}
+
+
+@router.get("/charts/signal", dependencies=[Depends(require_auth)])
+def chart_signal(period: str = "24h", svc=Depends(services)) -> dict:
+    since, until, bucket = _range(period)
+    return {"bucket": bucket, "rows": svc.db.signal_series(since, until, bucket)}
+
+
+@router.get("/charts/activity", dependencies=[Depends(require_auth)])
+def chart_activity(period: str = "24h", svc=Depends(services)) -> dict:
+    since, until, _ = _range(period)
+    bucket = 3600 if PERIODS.get(period, 86400) >= 86400 else 600
+    return {
+        "bucket": bucket,
+        "series": svc.db.activity_per_bucket(since, until, bucket),
+        "top": svc.db.contact_activity(since, until, 15),
+    }
+
+
 # --- WebSocket ---
 
 async def websocket_endpoint(ws: WebSocket) -> None:

@@ -10,6 +10,8 @@ import { NodePage } from "./pages/NodePage";
 import { Placeholder } from "./pages/Placeholder";
 import { ChannelsPage } from "./pages/Channels";
 import { DmsPage } from "./pages/Dms";
+import { RepeatersPage } from "./pages/Repeaters";
+import { ChartsPage } from "./pages/Charts";
 import { StatusBadge } from "./components/StatusBadge";
 import { ToastHost } from "./components/Toast";
 import { IconChannels, IconCharts, IconDm, IconMap, IconNode, IconRepeater, Logo } from "./components/Icons";
@@ -86,6 +88,12 @@ function Shell({ onLogout }: { onLogout: () => void }) {
       break;
     case "dm":
       page = <DmsPage param={route[1]} />;
+      break;
+    case "repeaters":
+      page = <RepeatersPage />;
+      break;
+    case "charts":
+      page = <ChartsPage param={route[1]} />;
       break;
     case "node":
       page = <NodePage onLogout={onLogout} />;
