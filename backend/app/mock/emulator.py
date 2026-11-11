@@ -31,6 +31,7 @@ from Crypto.Cipher import AES
 
 log = logging.getLogger("meshboard.mock")
 
+# общеизвестный ключ канала "Public" MeshCore (не секрет), нужен эмулятору для шифрования LOG_RX_DATA
 PUBLIC_CHANNEL_SECRET = bytes.fromhex("8b3387e9c5cdea6ac9e5edbaa115cd72")
 
 PHRASES = [

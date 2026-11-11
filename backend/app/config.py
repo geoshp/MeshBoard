@@ -76,6 +76,8 @@ class Settings:
     tcp_port: int = 5000
     mock: bool = False
     mock_speed: float = 1.0  # множитель частоты событий эмулятора
+    mock_autonomous: bool = True  # эмулятор сам генерирует входящий трафик
+    mock_history: bool = True  # синтетическая история при пустой БД
 
     # http
     host: str = "127.0.0.1"
@@ -137,6 +139,9 @@ def load_settings() -> Settings:
         s.mock_speed = float(_env("MESHCORE_MOCK_SPEED", "1") or "1")
     except ValueError as e:
         raise ConfigError("MESHCORE_MOCK_SPEED должно быть числом") from e
+
+    s.mock_autonomous = _bool("MESHCORE_MOCK_AUTONOMOUS", True)
+    s.mock_history = _bool("MESHCORE_MOCK_HISTORY", True)
 
     s.host = _env("MESHBOARD_HOST", s.host) or s.host
     s.port = _int("MESHBOARD_PORT", s.port)

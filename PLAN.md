@@ -126,4 +126,4 @@ CHANNEL_INFO, *_MSG_RECV_V3, MSG_SENT, ACK, BINARY_RESPONSE, TRACE_DATA, LOG_DAT
 - [x] Этап 2 — каналы и ЛС
 - [x] Этап 3 — репитеры и графики
 - [x] Этап 4 — карта и трассировки
-- [ ] Этап 5 — тесты и README
+- [x] Этап 5 — тесты и README (43 pytest-теста, README, проверка на утечки секретов)
