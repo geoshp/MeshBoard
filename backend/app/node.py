@@ -465,3 +465,82 @@ class NodeService:
                     self.force_reconnect("нода не отвечает на запросы")
             except Exception as e:  # noqa: BLE001
                 log.warning("self poll failed: %r", e)
+
+    # --- отправка сообщений ---
+    MAX_TEXT_BYTES = 150  # MAX_TEXT_LEN прошивки 160 байт с запасом
+
+    def max_channel_text(self) -> int:
+        name = ((self.status.get("self_info") or {}).get("name") or "")
+        # прошивка сама добавляет "Имя: " к сообщению канала
+        return max(20, self.MAX_TEXT_BYTES - len(name.encode("utf-8")) - 2)
+
+    async def send_channel(self, idx: int, text: str) -> dict:
+        mc = self.require()
+        name = (self.status.get("self_info") or {}).get("name")
+        row = parse.outgoing_row("chan", text, channel_idx=idx, sender_name=name)
+        msg = self.db.insert_message(row)
+        assert msg is not None
+        self.hub.publish("message", msg)
+        try:
+            ev = await self.cmd(mc.commands.send_chan_msg, idx, text, msg["sender_ts"])
+            ok = ev.type != EventType.ERROR
+        except Exception as e:  # noqa: BLE001
+            log.warning("send_chan_msg failed: %r", e)
+            ok = False
+        msg = self.db.update_message(msg["id"], status="sent" if ok else "failed", attempts=1)
+        self.hub.publish("message_update", msg)
+        return msg
+
+    async def send_dm(self, contact_key: str, text: str, max_attempts: int = 3) -> dict:
+        self.require()
+        row = parse.outgoing_row("dm", text, contact_key=contact_key)
+        msg = self.db.insert_message(row)
+        assert msg is not None
+        self.hub.publish("message", msg)
+        self.spawn(self._deliver_dm(msg["id"], contact_key, text, msg["sender_ts"], max_attempts),
+                   name="deliver-dm")
+        return msg
+
+    async def _deliver_dm(self, msg_id: int, key: str, text: str, ts: int, max_attempts: int) -> None:
+        """Отправка ЛС с ожиданием ACK и повторами (attempt=0..n, тот же timestamp).
+
+        Аналог commands.send_msg_with_retry, но блокировка держится только на время send_msg,
+        а ACK ждём вне её. ACK на любую из попыток означает доставку.
+        """
+        codes: set[str] = set()
+        for attempt in range(max_attempts):
+            mc = self.mc
+            if mc is None or not mc.is_connected:
+                break
+            waiter = EventWaiter(mc, EventType.ACK)
+            try:
+                try:
+                    ev = await self.cmd(mc.commands.send_msg, key, text, ts, attempt=attempt)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("send_msg failed: %r", e)
+                    continue
+                if ev.type == EventType.ERROR:
+                    log.warning("send_msg error: %s", ev.payload)
+                    continue
+                code = ev.payload["expected_ack"].hex()
+                codes.add(code)
+                self.hub.publish("message_update", self.db.update_message(
+                    msg_id, status="sent", expected_ack=code, attempts=attempt + 1))
+                timeout = max(5.0, ev.payload.get("suggested_timeout", 5000) / 1000 * 1.2)
+                # ACK мог прийти раньше подписки этой попытки — проверяем кэш
+                hit = next((c for c in codes if c in self._recent_acks), None)
+                ack = None
+                if hit is None:
+                    ack = await waiter.wait(lambda e: e.payload.get("code") in codes, timeout)
+                if hit or ack:
+                    c = hit or ack.payload["code"]
+                    trip = (self._recent_acks.get(c) or {}).get("trip")
+                    if ack is not None:
+                        trip = ack.payload.get("trip_time", trip)
+                    self.hub.publish("message_update", self.db.update_message(
+                        msg_id, status="delivered", trip_ms=trip))
+                    self.db.touch_contact(key)
+                    return
+            finally:
+                waiter.close()
+        self.hub.publish("message_update", self.db.update_message(msg_id, status="failed"))

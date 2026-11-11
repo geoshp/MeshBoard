@@ -119,6 +119,107 @@ def reconnect(svc=Depends(services)) -> dict:
     return {"ok": True}
 
 
+# --- контакты, каналы, ЛС ---
+
+class SendBody(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+
+
+def _clean_text(text: str, limit: int) -> str:
+    text = text.strip()
+    if not text:
+        raise body_error("text_empty")
+    if len(text.encode("utf-8")) > limit:
+        raise body_error("text_too_long")
+    return text
+
+
+def _own_set(svc) -> set[str]:
+    return set(svc.db.get_setting("own_repeaters", []) or [])
+
+
+def _contact_out(c: dict, own: set[str]) -> dict:
+    c = dict(c)
+    c["own"] = c["public_key"] in own
+    return c
+
+
+@router.get("/contacts", dependencies=[Depends(require_auth)])
+def contacts(svc=Depends(services)) -> list[dict]:
+    own = _own_set(svc)
+    return [_contact_out(c, own) for c in svc.db.list_contacts()]
+
+
+@router.get("/contacts/{key}", dependencies=[Depends(require_auth)])
+def contact(key: str, svc=Depends(services)) -> dict:
+    c = svc.db.get_contact(key.lower())
+    if not c:
+        raise body_error("contact_not_found", 404)
+    return _contact_out(c, _own_set(svc))
+
+
+@router.get("/unread", dependencies=[Depends(require_auth)])
+def unread(svc=Depends(services)) -> dict:
+    return svc.db.unread_summary()
+
+
+@router.get("/channels", dependencies=[Depends(require_auth)])
+def channels(svc=Depends(services)) -> dict:
+    return {"channels": svc.db.list_channels(), "max_text": svc.node.max_channel_text()}
+
+
+@router.get("/channels/{idx}/messages", dependencies=[Depends(require_auth)])
+def channel_messages(idx: int, before: int | None = None, limit: int = 50, svc=Depends(services)) -> list[dict]:
+    return svc.db.list_channel_messages(idx, before, max(1, min(limit, 200)))
+
+
+@router.post("/channels/{idx}/messages", dependencies=[Depends(require_auth)])
+async def channel_send(idx: int, body: SendBody, svc=Depends(services)) -> dict:
+    if svc.db.get_channel(idx) is None:
+        raise body_error("channel_not_found", 404)
+    text = _clean_text(body.text, svc.node.max_channel_text())
+    if not svc.node.connected:
+        raise node_unavailable()
+    return await svc.node.send_channel(idx, text)
+
+
+@router.post("/channels/{idx}/read", dependencies=[Depends(require_auth)])
+def channel_read(idx: int, svc=Depends(services)) -> dict:
+    n = svc.db.mark_read("chan", idx)
+    if n:
+        svc.hub.publish("read", {"kind": "chan", "key": idx})
+    return {"ok": True, "marked": n}
+
+
+@router.get("/dm", dependencies=[Depends(require_auth)])
+def conversations(svc=Depends(services)) -> dict:
+    return {"conversations": svc.db.list_conversations(), "max_text": svc.node.MAX_TEXT_BYTES}
+
+
+@router.get("/dm/{key}/messages", dependencies=[Depends(require_auth)])
+def dm_messages(key: str, before: int | None = None, limit: int = 50, svc=Depends(services)) -> list[dict]:
+    return svc.db.list_dm_messages(key.lower(), before, max(1, min(limit, 200)))
+
+
+@router.post("/dm/{key}/messages", dependencies=[Depends(require_auth)])
+async def dm_send(key: str, body: SendBody, svc=Depends(services)) -> dict:
+    c = svc.db.get_contact(key.lower())
+    if not c:
+        raise body_error("contact_not_found", 404)
+    text = _clean_text(body.text, svc.node.MAX_TEXT_BYTES)
+    if not svc.node.connected:
+        raise node_unavailable()
+    return await svc.node.send_dm(c["public_key"], text)
+
+
+@router.post("/dm/{key}/read", dependencies=[Depends(require_auth)])
+def dm_read(key: str, svc=Depends(services)) -> dict:
+    n = svc.db.mark_read("dm", key.lower())
+    if n:
+        svc.hub.publish("read", {"kind": "dm", "key": key.lower()})
+    return {"ok": True, "marked": n}
+
+
 # --- WebSocket ---
 
 async def websocket_endpoint(ws: WebSocket) -> None:

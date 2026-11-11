@@ -216,3 +216,5 @@ select.input { appearance: none; padding-right: 28px; }
 .bar { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
 .bar > div { height: 100%; background: var(--accent); }
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--nav-h) + var(--safe-b) + 16px); background: var(--surface-3); border: 1px solid var(--border); padding: 10px 16px; border-radius: 10px; z-index: 1000; max-width: 90%; }
+@media (min-width: 720px) { .mobile-only { display: none !important; } }
+@media (horizontal-viewport-segments: 2) { .mobile-only { display: none !important; } }

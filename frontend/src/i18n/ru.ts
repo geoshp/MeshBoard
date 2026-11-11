@@ -116,6 +116,7 @@ export const ru = {
   "msg.rssi": "RSSI {v}",
   "msg.hops": "хопов: {n}",
   "msg.direct": "прямой маршрут",
+  "msg.zero_hops": "напрямую, без ретрансляторов",
   "msg.path": "путь: {p}",
   "msg.too_long": "Слишком длинное сообщение ({n}/{max} байт)",
 

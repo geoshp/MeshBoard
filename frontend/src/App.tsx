@@ -8,6 +8,8 @@ import type { Config, NodeStatus, Unread } from "./lib/types";
 import { Login } from "./pages/Login";
 import { NodePage } from "./pages/NodePage";
 import { Placeholder } from "./pages/Placeholder";
+import { ChannelsPage } from "./pages/Channels";
+import { DmsPage } from "./pages/Dms";
 import { StatusBadge } from "./components/StatusBadge";
 import { ToastHost } from "./components/Toast";
 import { IconChannels, IconCharts, IconDm, IconMap, IconNode, IconRepeater, Logo } from "./components/Icons";
@@ -79,6 +81,12 @@ function Shell({ onLogout }: { onLogout: () => void }) {
 
   let page: ReactNode;
   switch (section) {
+    case "channels":
+      page = <ChannelsPage param={route[1]} />;
+      break;
+    case "dm":
+      page = <DmsPage param={route[1]} />;
+      break;
     case "node":
       page = <NodePage onLogout={onLogout} />;
       break;
