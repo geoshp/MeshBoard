@@ -18,3 +18,4 @@ data/
 .env
 secrets/
 !secrets/.gitkeep
+*.tsbuildinfo
