@@ -1,0 +1,36 @@
+# Базовый файл: подключение по TCP/WiFi или эмулятор (MESHCORE_MOCK=1).
+# USB/serial: docker compose -f docker-compose.yml -f docker-compose.serial.yml up -d
+services:
+  meshboard:
+    build: .
+    image: meshboard:latest
+    container_name: meshboard
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MESHBOARD_HOST: 0.0.0.0
+      MESHBOARD_PORT: "8080"
+      MESHBOARD_DATA_DIR: /data
+    ports:
+      # по умолчанию только localhost; для доступа из LAN задайте MESHBOARD_BIND=0.0.0.0
+      - "${MESHBOARD_BIND:-127.0.0.1}:${MESHBOARD_PUBLISH_PORT:-8080}:8080"
+    volumes:
+      - meshboard-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  meshboard-data:

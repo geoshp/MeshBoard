@@ -1,0 +1,12 @@
+# Дополнение для USB/serial: проброс устройства в контейнер.
+# docker compose -f docker-compose.yml -f docker-compose.serial.yml up -d
+services:
+  meshboard:
+    devices:
+      - "${MESHCORE_SERIAL_DEVICE:-/dev/ttyUSB0}:/dev/ttyMESH"
+    group_add:
+      # группа-владелец устройства на хосте (stat -c %g /dev/ttyUSB0), обычно dialout = 20
+      - "${SERIAL_GID:-dialout}"
+    environment:
+      MESHCORE_CONNECTION: serial
+      MESHCORE_SERIAL_PORT: /dev/ttyMESH

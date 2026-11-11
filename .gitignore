@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Data / secrets
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+secrets/
+!secrets/.gitkeep

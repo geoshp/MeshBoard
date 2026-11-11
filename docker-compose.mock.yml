@@ -1,0 +1,6 @@
+# Дополнение для разработки без железа: встроенный эмулятор ноды.
+# docker compose -f docker-compose.yml -f docker-compose.mock.yml up -d
+services:
+  meshboard:
+    environment:
+      MESHCORE_MOCK: "1"
